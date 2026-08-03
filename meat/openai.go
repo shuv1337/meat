@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -28,9 +29,11 @@ const maxOpenAIOutputTokens = 32768
 // streaming responses because ChatGPT-backed exe.dev integrations require
 // streaming, but Generate still returns one complete provider-agnostic reply.
 type OpenAIModel struct {
-	APIKey          string       // optional for an exe.dev integration or a keyless custom base URL
-	Model           string       // defaults to DefaultOpenAIModel
-	BaseURL         string       // bare origin/prefix or .../v1; defaults to https://api.openai.com
+	APIKey          string       // optional for an exe.dev integration or a keyless custom base URL; OAuth access JWT when Codex is true
+	Model           string       // defaults to DefaultOpenAIModel (or DefaultOpenAICodexModel when Codex)
+	BaseURL         string       // bare origin/prefix or .../v1; defaults to https://api.openai.com (or chatgpt.com backend when Codex)
+	AccountID       string       // ChatGPT account id required for Codex OAuth requests
+	Codex           bool         // when true, use ChatGPT subscription /codex/responses wire contract
 	ReasoningEffort string       // defaults to DefaultReasoningEffort
 	HTTPC           *http.Client // defaults to a client with a 5m timeout
 }
@@ -40,35 +43,56 @@ type OpenAIModel struct {
 //
 // Resolution order:
 //  1. If OPENAI_API_KEY (or OPENAI_BASE_URL) is set, use it directly.
-//  2. Otherwise, on an exe.dev VM with an attached "llm" integration, route
+//  2. Else if a ChatGPT OAuth credential is stored (meat login openai), use Codex.
+//  3. Otherwise, on an exe.dev VM with an attached "llm" integration, route
 //     through its provider-specific /openai prefix with edge-managed creds.
-//  3. Otherwise, error.
+//  4. Otherwise, error.
 //
-// model falls back to $MEAT_MODEL, then DefaultOpenAIModel. Thinking defaults
-// to medium; embedders may override OpenAIModel.ReasoningEffort.
+// model falls back to $MEAT_MODEL, then DefaultOpenAIModel (or
+// DefaultOpenAICodexModel for OAuth). Thinking defaults to medium; embedders
+// may override OpenAIModel.ReasoningEffort.
 func NewOpenAIFromEnv(ctx context.Context, model string) (*OpenAIModel, error) {
-	model = resolveModel(model, DefaultOpenAIModel)
-
 	key := os.Getenv("OPENAI_API_KEY")
 	baseURL := os.Getenv("OPENAI_BASE_URL")
 	if key != "" || baseURL != "" {
 		return &OpenAIModel{
 			APIKey:          key,
-			Model:           model,
+			Model:           resolveModel(model, DefaultOpenAIModel),
 			BaseURL:         baseURL,
+			ReasoningEffort: DefaultReasoningEffort,
+		}, nil
+	}
+
+	if cred, ok, err := LoadOAuthCredential(OAuthProviderOpenAICodex); err != nil {
+		return nil, err
+	} else if ok {
+		fresh, err := ResolveOpenAICodexOAuth(false)
+		if err != nil {
+			if !oauthNeedsRefresh(cred, time.Now()) {
+				fresh = cred
+			} else {
+				return nil, err
+			}
+		}
+		return &OpenAIModel{
+			APIKey:          fresh.Access,
+			AccountID:       fresh.AccountID,
+			Model:           resolveModel(model, DefaultOpenAICodexModel),
+			BaseURL:         openaiCodexBaseURL,
+			Codex:           true,
 			ReasoningEffort: DefaultReasoningEffort,
 		}, nil
 	}
 
 	if base := discoverExeGatewayBase(ctx, nil); base != "" {
 		return &OpenAIModel{
-			Model:           model,
+			Model:           resolveModel(model, DefaultOpenAIModel),
 			BaseURL:         base + "/openai",
 			ReasoningEffort: DefaultReasoningEffort,
 		}, nil
 	}
 
-	return nil, fmt.Errorf("no OpenAI credentials: set OPENAI_API_KEY, OPENAI_BASE_URL, or run on an exe.dev VM with an attached 'llm' integration")
+	return nil, fmt.Errorf("no OpenAI credentials: set OPENAI_API_KEY, OPENAI_BASE_URL, run `meat login openai`, or use an exe.dev VM with an attached 'llm' integration")
 }
 
 // --- wire types ---
@@ -150,12 +174,34 @@ func (m *OpenAIModel) Generate(ctx context.Context, system string, messages []Me
 		return nil, fmt.Errorf("meat: OpenAIModel needs APIKey or BaseURL")
 	}
 
+	apiKey := m.APIKey
+	accountID := m.AccountID
+	if m.Codex {
+		if cred, err := ResolveOpenAICodexOAuth(false); err == nil {
+			apiKey = cred.Access
+			accountID = cred.AccountID
+			m.APIKey = cred.Access
+			m.AccountID = cred.AccountID
+		}
+		if accountID == "" {
+			accountID = chatgptAccountIDFromJWT(apiKey)
+			m.AccountID = accountID
+		}
+		if accountID == "" {
+			return nil, fmt.Errorf("meat: OpenAI Codex OAuth needs chatgpt account id")
+		}
+	}
+
 	input, err := toOpenAIInput(messages)
 	if err != nil {
 		return nil, err
 	}
+	defaultModel := DefaultOpenAIModel
+	if m.Codex {
+		defaultModel = DefaultOpenAICodexModel
+	}
 	reqBody := openAIReq{
-		Model:           cmpOr(m.Model, DefaultOpenAIModel),
+		Model:           cmpOr(m.Model, defaultModel),
 		Instructions:    system,
 		Input:           input,
 		Tools:           toOpenAITools(tools),
@@ -170,16 +216,40 @@ func (m *OpenAIModel) Generate(ctx context.Context, system string, messages []Me
 		return nil, err
 	}
 
-	url := openAIResponsesURL(cmpOr(m.BaseURL, "https://api.openai.com"))
+	base := cmpOr(m.BaseURL, "https://api.openai.com")
+	if m.Codex && m.BaseURL == "" {
+		base = openaiCodexBaseURL
+	}
+	endpoint := openAIResponsesURL(base)
+	if m.Codex {
+		endpoint = openaiCodexResponsesURL(base)
+	}
 	client := m.HTTPC
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Minute}
 	}
-	raw, err := postJSONWithRetry(ctx, client, url, body, "openai", func(req *http.Request) {
-		if m.APIKey != "" {
-			req.Header.Set("authorization", "Bearer "+m.APIKey)
+	setHeaders := func(req *http.Request) {
+		if apiKey != "" {
+			req.Header.Set("authorization", "Bearer "+apiKey)
 		}
-	})
+		if m.Codex {
+			req.Header.Set("chatgpt-account-id", accountID)
+			req.Header.Set("originator", openaiCodexOriginator)
+			req.Header.Set("OpenAI-Beta", "responses=experimental")
+			req.Header.Set("user-agent", "meat ("+runtime.GOOS+"/"+runtime.GOARCH+")")
+		}
+	}
+	raw, err := postJSONWithRetry(ctx, client, endpoint, body, "openai", setHeaders)
+	if err != nil && m.Codex && isUnauthorizedErr(err) {
+		cred, refreshErr := ResolveOpenAICodexOAuth(true)
+		if refreshErr == nil {
+			apiKey = cred.Access
+			accountID = cred.AccountID
+			m.APIKey = cred.Access
+			m.AccountID = cred.AccountID
+			raw, err = postJSONWithRetry(ctx, client, endpoint, body, "openai", setHeaders)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

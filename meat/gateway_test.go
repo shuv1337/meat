@@ -97,6 +97,7 @@ func TestNewAnthropicFromEnv_FallsBackToGateway(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 	t.Setenv("MEAT_MODEL", "")
+	t.Setenv("MEAT_AUTH_FILE", filepath.Join(t.TempDir(), "auth.json"))
 	withMarker(t)
 	withReflection(t, `{"integrations":[{"name":"llm","type":"llm"}]}`)
 
@@ -118,6 +119,7 @@ func TestNewAnthropicFromEnv_FallsBackToGateway(t *testing.T) {
 func TestNewAnthropicFromEnv_NoCredentials(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
+	t.Setenv("MEAT_AUTH_FILE", filepath.Join(t.TempDir(), "auth.json"))
 	old := exeDevMarkerPath
 	exeDevMarkerPath = filepath.Join(t.TempDir(), "nope")
 	t.Cleanup(func() { exeDevMarkerPath = old })
@@ -158,6 +160,7 @@ func TestNewModelFromEnv_DefaultsToOpenAIThroughGateway(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_BASE_URL", "")
 	t.Setenv("MEAT_MODEL", "")
+	t.Setenv("MEAT_AUTH_FILE", filepath.Join(t.TempDir(), "auth.json"))
 	withMarker(t)
 	withReflection(t, `{"integrations":[{"name":"llm","type":"llm"}]}`)
 
@@ -200,6 +203,7 @@ func TestNewModelFromEnv_ClaudeUsesAnthropic(t *testing.T) {
 func TestNewOpenAIFromEnv_NoCredentials(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("MEAT_AUTH_FILE", filepath.Join(t.TempDir(), "auth.json"))
 	old := exeDevMarkerPath
 	exeDevMarkerPath = filepath.Join(t.TempDir(), "nope")
 	t.Cleanup(func() { exeDevMarkerPath = old })

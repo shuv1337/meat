@@ -25,7 +25,8 @@
 //	git diff main...HEAD | meat
 //
 // It reads OPENAI_API_KEY or ANTHROPIC_API_KEY from the environment
-// (optionally the matching provider base URL, plus MEAT_MODEL / -model).
+// (optionally the matching provider base URL, plus MEAT_MODEL / -model),
+// or subscription OAuth tokens from `meat login openai|anthropic`.
 package main
 
 import (
@@ -51,6 +52,11 @@ Usage:
   meat -w              Abridge the unstaged working-tree changes: git diff.
   git show <sha> | meat   Abridge the diff piped on stdin.
   git diff | meat         Abridge the working-tree diff piped on stdin.
+
+  meat login openai [--device]   Log in with ChatGPT Plus/Pro subscription.
+  meat login anthropic           Log in with Claude Pro/Max subscription.
+  meat logout [openai|anthropic] Remove stored OAuth credentials.
+  meat auth status               Show OAuth credential status.
 
 meat reads a unified diff (from stdin, from a named revision or range, or HEAD
 when stdin is a terminal), asks an LLM to drop everything not worth reading, and
@@ -79,13 +85,17 @@ Environment:
   ANTHROPIC_BASE_URL   Optional. Override the Anthropic API base URL.
   MEAT_MODEL           Optional. Default model id.
   MEAT_CACHE           Optional. Cache directory (default ~/.meat; empty disables).
+  MEAT_AUTH_FILE       Optional. OAuth credential store (default ~/.meat/auth.json).
 
-On an exe.dev VM with an attached "llm" integration, meat uses the managed
-LLM gateway automatically — no API key needed. Provider-specific API keys or
-base URLs override the gateway.
+Auth precedence: explicit API key / base URL, then stored OAuth (meat login),
+then the exe.dev managed LLM gateway when available.
 `
 
 func main() {
+	if tryAuthCommand(os.Args[1:]) {
+		return
+	}
+
 	fs := flag.NewFlagSet("meat", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
