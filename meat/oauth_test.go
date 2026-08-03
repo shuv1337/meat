@@ -213,7 +213,7 @@ func TestOpenAICodexRequestPathAndHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var sawPath, sawAccount, sawOriginator, sawBeta bool
+	var sawPath, sawAccount, sawOriginator, sawBeta, omittedMaxOutputTokens bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/codex/responses" {
 			sawPath = true
@@ -230,6 +230,12 @@ func TestOpenAICodexRequestPathAndHeaders(t *testing.T) {
 		if got := r.Header.Get("authorization"); !strings.HasPrefix(got, "Bearer ") {
 			t.Errorf("authorization = %q", got)
 		}
+		var requestBody map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		_, hasMaxOutputTokens := requestBody["max_output_tokens"]
+		omittedMaxOutputTokens = !hasMaxOutputTokens
 		w.Header().Set("content-type", "text/event-stream")
 		writeOpenAIEvent(w, outputItemDone(0, map[string]any{
 			"type": "message",
@@ -253,8 +259,8 @@ func TestOpenAICodexRequestPathAndHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sawPath || !sawAccount || !sawOriginator || !sawBeta {
-		t.Fatalf("path=%v account=%v originator=%v beta=%v", sawPath, sawAccount, sawOriginator, sawBeta)
+	if !sawPath || !sawAccount || !sawOriginator || !sawBeta || !omittedMaxOutputTokens {
+		t.Fatalf("path=%v account=%v originator=%v beta=%v omitted_max_output_tokens=%v", sawPath, sawAccount, sawOriginator, sawBeta, omittedMaxOutputTokens)
 	}
 }
 

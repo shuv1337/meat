@@ -106,7 +106,7 @@ type openAIReq struct {
 	Include         []string          `json:"include"`
 	Store           bool              `json:"store"`
 	Stream          bool              `json:"stream"`
-	MaxOutputTokens int               `json:"max_output_tokens"`
+	MaxOutputTokens int               `json:"max_output_tokens,omitempty"`
 }
 
 type openAIReasoning struct {
@@ -210,6 +210,12 @@ func (m *OpenAIModel) Generate(ctx context.Context, system string, messages []Me
 		Store:           false,
 		Stream:          true,
 		MaxOutputTokens: maxOpenAIOutputTokens,
+	}
+	// ChatGPT's Codex Responses endpoint rejects the standard API's
+	// max_output_tokens parameter. The subscription endpoint manages its own
+	// output budget, so omit the field entirely in Codex mode.
+	if m.Codex {
+		reqBody.MaxOutputTokens = 0
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
