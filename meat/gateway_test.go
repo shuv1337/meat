@@ -154,7 +154,7 @@ func TestNewOpenAIFromEnv_PrefersExplicitKey(t *testing.T) {
 	}
 }
 
-func TestNewModelFromEnv_DefaultsToOpenAIThroughGateway(t *testing.T) {
+func TestNewModelFromEnv_DefaultsToAnthropicThroughGateway(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_BASE_URL", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
@@ -168,18 +168,18 @@ func TestNewModelFromEnv_DefaultsToOpenAIThroughGateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, ok := model.(*OpenAIModel)
+	m, ok := model.(*AnthropicModel)
 	if !ok {
-		t.Fatalf("default backend = %T, want *OpenAIModel", model)
+		t.Fatalf("default backend = %T, want *AnthropicModel", model)
 	}
-	if m.Model != "gpt-5.6-sol" {
-		t.Errorf("Model = %q, want gpt-5.6-sol", m.Model)
+	if m.Model != "claude-sonnet-5" {
+		t.Errorf("Model = %q, want claude-sonnet-5", m.Model)
 	}
-	if m.BaseURL != "https://llm.int.exe.xyz/openai" {
-		t.Errorf("BaseURL = %q, want gateway OpenAI prefix", m.BaseURL)
+	if m.BaseURL != "https://llm.int.exe.xyz/anthropic" {
+		t.Errorf("BaseURL = %q, want gateway Anthropic prefix", m.BaseURL)
 	}
-	if m.ReasoningEffort != "medium" {
-		t.Errorf("ReasoningEffort = %q, want medium", m.ReasoningEffort)
+	if m.APIKey != implicitGatewayKey {
+		t.Errorf("APIKey = %q, want %q", m.APIKey, implicitGatewayKey)
 	}
 }
 

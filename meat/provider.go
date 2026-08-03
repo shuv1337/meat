@@ -7,7 +7,7 @@ import (
 )
 
 // DefaultModel is meat's built-in default model.
-const DefaultModel = DefaultOpenAIModel
+const DefaultModel = DefaultAnthropicModel
 
 // ResolveModel applies the CLI model fallback chain: the explicit value, then
 // $MEAT_MODEL, then DefaultModel. It performs no network or credential work, so

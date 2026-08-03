@@ -14,7 +14,7 @@ import (
 
 // DefaultAnthropicModel is used when AnthropicModel.Model is empty or the
 // provider-specific constructor receives no model selection.
-const DefaultAnthropicModel = "claude-opus-4-8"
+const DefaultAnthropicModel = "claude-sonnet-5"
 
 // AnthropicModel is a built-in Model backed by the Anthropic Messages API. It
 // uses only the standard library so meat.dev has no third-party dependencies.
