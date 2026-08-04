@@ -102,7 +102,7 @@ type Result struct {
 	// patch: removed lines may leave original hunk counts stale. Empty when no
 	// meaningful change remains after abridging.
 	SmartDiff string `json:"smart_diff"`
-	// Summary is a one-line, high-level description of the change.
+	// Summary is a short, plain-language description of the change.
 	Summary string `json:"summary"`
 	// InputTokens and OutputTokens are the cumulative token usage across the run.
 	InputTokens  int `json:"input_tokens"`

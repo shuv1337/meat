@@ -11,6 +11,10 @@ The TUI action accepts `/meat`, `/meat current`, `/meat parent`, `/meat staged`
 (Git only), or a Git revision/range or jj revset. Its result is inserted into
 the active session as a synthetic message and does not resume the model.
 
+The plugin displays Meat's short plain-language summary before the reading
+diff. From the terminal, `meat -summary` prints only that sentence and uses the
+same persistent cache as a normal run.
+
 ## Install
 
 Install the `meat` binary first:

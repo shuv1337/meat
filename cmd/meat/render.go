@@ -36,6 +36,12 @@ func renderJSONMeta(w io.Writer, res *meat.Result, elision, vcs, source string, 
 	})
 }
 
+// renderSummary writes only the model's short plain-language summary. It uses
+// the same cached Result as the normal reading-diff renderer.
+func renderSummary(w io.Writer, res *meat.Result) {
+	fmt.Fprintln(w, strings.TrimSpace(res.Summary))
+}
+
 // renderResult writes the result body (summary + diff) to w. When w is an
 // interactive terminal it mimics `git show`: colorize the diff with git's
 // configured diff colors (honoring color.ui/color.diff) and page through git's

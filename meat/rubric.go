@@ -197,7 +197,7 @@ Most edits should remove whole original lines. For a contiguous run of source li
 
 Reason across the whole change: a line that looks like noise in one file is often explained by a change in another. You have read-only tools to inspect the surrounding source tree. USE THEM when a clue would change your judgment about whether something is load-bearing. Do NOT over-investigate: most lines can be judged from the diff alone.
 
-When a plan is sizeable, call preview_plan first and inspect the projected diff plus its retention feedback (very large previews are explicitly truncated). Refine once if the preview is still mechanically verbose. Then call submit with complete remove, replace, and fold arrays plus a one-line summary.
+When a plan is sizeable, call preview_plan first and inspect the projected diff plus its retention feedback (very large previews are explicitly truncated). Refine once if the preview is still mechanically verbose. Then call submit with complete remove, replace, and fold arrays plus one short plain-language sentence explaining what changed and why it matters. Avoid implementation jargon; when a technical term is essential, explain it in everyday words.
 
 ## Principles
 

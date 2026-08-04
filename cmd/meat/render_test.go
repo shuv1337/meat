@@ -28,6 +28,14 @@ func TestFormatBodyPlain(t *testing.T) {
 	}
 }
 
+func TestRenderSummary(t *testing.T) {
+	var buf bytes.Buffer
+	renderSummary(&buf, &meat.Result{Summary: "Explains the change plainly. ", SmartDiff: "+ignored\n"})
+	if got, want := buf.String(), "Explains the change plainly.\n"; got != want {
+		t.Fatalf("renderSummary() = %q, want %q", got, want)
+	}
+}
+
 func TestFormatBodyEmptyDiff(t *testing.T) {
 	for _, p := range []diffPalette{{}, coloredP} {
 		got := formatBody(&meat.Result{Summary: "s"}, "", p)

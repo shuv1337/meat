@@ -32,6 +32,7 @@ meat -w              # current change (git worktree / jj @)
 meat current         # same as -w
 meat parent          # git HEAD / jj @-
 meat -staged         # git only
+meat -summary        # short plain-language summary only
 meat HEAD~3          # git revision
 meat '@-'            # jj revset (quote for the shell)
 meat 'trunk()::@'    # jj revset

@@ -98,6 +98,7 @@ Flags:
   -staged         Read staged changes (git only).
   -w              Read the current change (git worktree / jj @).
   -vcs string     Backend: auto (default), git, or jj.
+  -summary        Print only the short plain-language summary.
   -json           Emit the result as JSON on stdout (no color, no pager).
   -h, --help      Show this help.
 
@@ -128,6 +129,7 @@ func main() {
 	staged := fs.Bool("staged", false, "read staged changes (git only)")
 	worktree := fs.Bool("w", false, "read the current change (git worktree / jj @)")
 	vcsFlag := fs.String("vcs", "", "backend: auto, git, or jj (default auto; also MEAT_VCS)")
+	summaryOnly := fs.Bool("summary", false, "print only the short plain-language summary")
 	jsonOut := fs.Bool("json", false, "emit the result as JSON on stdout")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		// flag already printed the error and (for -h) the usage.
@@ -135,6 +137,9 @@ func main() {
 			os.Exit(0)
 		}
 		os.Exit(2)
+	}
+	if *summaryOnly && *jsonOut {
+		fatal("-summary and -json are mutually exclusive")
 	}
 
 	pref, err := parseVCSPreference(*vcsFlag, os.Getenv("MEAT_VCS"))
@@ -209,6 +214,10 @@ func main() {
 		elision := meat.ElisionLine(diff, res.SmartDiff)
 		if *jsonOut {
 			renderJSONMeta(os.Stdout, res, elision, vcsLabel, source, false)
+			return
+		}
+		if *summaryOnly {
+			renderSummary(os.Stdout, res)
 			return
 		}
 		// On an interactive terminal, render like `git show`: git's diff colors

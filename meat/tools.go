@@ -65,7 +65,7 @@ func editPlanToolSchema(withSummary bool) json.RawMessage {
 		}`
 	required := `"remove","replace","fold"`
 	if withSummary {
-		properties += `,"summary":{"type":"string","description":"One-line, high-level description of what the change does."}`
+		properties += `,"summary":{"type":"string","description":"One short plain-language sentence explaining what changed and why it matters. Avoid implementation jargon; when a technical term is essential, explain it in everyday words."}`
 		required += `,"summary"`
 	}
 	return json.RawMessage(fmt.Sprintf(`{"type":"object","additionalProperties":false,"properties":{%s},"required":[%s]}`, properties, required))
@@ -84,7 +84,7 @@ func (tb *toolbox) previewPlanTool() Tool {
 func (tb *toolbox) submitTool() Tool {
 	return Tool{
 		Name:        "submit",
-		Description: "Submit a final complete remove/replace/fold plan against the numbered ORIGINAL diff plus a one-line summary. Meat applies the plan locally (removing imports automatically and rejecting asymmetric treatment of moved code); do not submit a rewritten diff.",
+		Description: "Submit a final complete remove/replace/fold plan against the numbered ORIGINAL diff plus a short plain-language summary. Meat applies the plan locally (removing imports automatically and rejecting asymmetric treatment of moved code); do not submit a rewritten diff.",
 		InputSchema: editPlanToolSchema(true),
 	}
 }
