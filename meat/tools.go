@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -23,6 +24,7 @@ const maxToolOutput = 16 * 1024
 // the submit tool.
 type toolbox struct {
 	root           string
+	backend        string // "git", "jj", or empty (defaults to git when root set)
 	rawDiff        string
 	smartDiff      string
 	submitted      *submission
@@ -35,6 +37,13 @@ type toolbox struct {
 	// which are enforced instead.
 	noMoves bool
 	moves   []detectedMove
+}
+
+func (tb *toolbox) searchBackend() string {
+	if tb.backend == "jj" {
+		return "jj"
+	}
+	return "git"
 }
 
 func editPlanToolSchema(withSummary bool) json.RawMessage {
@@ -85,6 +94,10 @@ func (tb *toolbox) tools() []Tool {
 	if tb.root == "" {
 		return []Tool{tb.previewPlanTool(), tb.submitTool()}
 	}
+	grepDesc := "Search the repository for a POSIX basic regular expression (git grep). Use it to find call sites, type definitions, generator directives, or whether a symbol is used elsewhere. Optionally scope to a path prefix."
+	if tb.searchBackend() == "jj" {
+		grepDesc = "Search files present in the jj working-copy commit (@) for a Go RE2 regular expression. Use it to find call sites, type definitions, generator directives, or whether a symbol is used elsewhere. Optionally scope to a path prefix. Does not search ignored or arbitrary untracked files."
+	}
 	return []Tool{
 		{
 			Name:        "read_file",
@@ -93,7 +106,7 @@ func (tb *toolbox) tools() []Tool {
 		},
 		{
 			Name:        "grep",
-			Description: "Search the repository for a regular expression (git grep). Use it to find call sites, type definitions, generator directives, or whether a symbol is used elsewhere. Optionally scope to a path prefix.",
+			Description: grepDesc,
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Regular expression to search for."},"path":{"type":"string","description":"Optional path prefix (relative to repo root)."}},"required":["pattern"]}`),
 		},
 		tb.previewPlanTool(),
@@ -178,12 +191,21 @@ func (tb *toolbox) grep(ctx context.Context, raw json.RawMessage) (string, bool)
 	if strings.TrimSpace(in.Pattern) == "" {
 		return "pattern is required", true
 	}
-	args := []string{"grep", "-n", "-I", "--no-color", "-e", in.Pattern}
 	if in.Path != "" {
 		if _, err := tb.resolveInRoot(in.Path); err != nil {
 			return err.Error(), true
 		}
-		args = append(args, "--", in.Path)
+	}
+	if tb.searchBackend() == "jj" {
+		return tb.grepJJ(ctx, in.Pattern, in.Path)
+	}
+	return tb.grepGit(ctx, in.Pattern, in.Path)
+}
+
+func (tb *toolbox) grepGit(ctx context.Context, pattern, path string) (string, bool) {
+	args := []string{"grep", "-n", "-I", "--no-color", "-e", pattern}
+	if path != "" {
+		args = append(args, "--", path)
 	}
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = tb.root
@@ -198,6 +220,85 @@ func (tb *toolbox) grep(ctx context.Context, raw json.RawMessage) (string, bool)
 		return "(no matches)", false
 	}
 	return truncateForTool(capLines(string(out), 200)), false
+}
+
+// grepJJ searches files present in the jj @ tree using Go RE2. It enumerates
+// paths with `jj file list -r @`, applies the path restriction, skips
+// non-regular and binary files, and emits path:line:text matches.
+func (tb *toolbox) grepJJ(ctx context.Context, pattern, pathPrefix string) (string, bool) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Sprintf("invalid regular expression: %v", err), true
+	}
+	cmd := exec.CommandContext(ctx, "jj", "file", "list", "-r", "@")
+	cmd.Dir = tb.root
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return fmt.Sprintf("jj file list: %s", strings.TrimSpace(string(ee.Stderr))), true
+		}
+		return fmt.Sprintf("jj file list: %v", err), true
+	}
+
+	prefix := ""
+	if pathPrefix != "" {
+		prefix = filepath.Clean(pathPrefix)
+		if prefix == "." {
+			prefix = ""
+		}
+	}
+
+	var matches strings.Builder
+	n := 0
+	for _, rel := range strings.Split(string(out), "\n") {
+		rel = strings.TrimSpace(rel)
+		if rel == "" {
+			continue
+		}
+		clean := filepath.Clean(rel)
+		if prefix != "" {
+			if clean != prefix && !strings.HasPrefix(clean, prefix+string(os.PathSeparator)) {
+				continue
+			}
+		}
+		abs, err := tb.resolveInRoot(clean)
+		if err != nil {
+			continue
+		}
+		info, err := os.Lstat(abs)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		data, err := os.ReadFile(abs)
+		if err != nil || isBinary(data) {
+			continue
+		}
+		sc := bufio.NewScanner(bytes.NewReader(data))
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		lineNo := 0
+		for sc.Scan() {
+			lineNo++
+			line := sc.Text()
+			if !re.MatchString(line) {
+				continue
+			}
+			fmt.Fprintf(&matches, "%s:%d:%s\n", clean, lineNo, line)
+			n++
+			if n >= 200 {
+				fmt.Fprintf(&matches, "... (truncated, more than %d lines)\n", 200)
+				return truncateForTool(matches.String()), false
+			}
+		}
+	}
+	if n == 0 {
+		return "(no matches)", false
+	}
+	return truncateForTool(matches.String()), false
+}
+
+// isBinary reports whether data looks like a binary file (NUL byte present).
+func isBinary(data []byte) bool {
+	return bytes.IndexByte(data, 0) >= 0
 }
 
 func requirePlanArrays(remove []lineRange, replace []lineReplacement, fold []lineFold) error {

@@ -185,7 +185,7 @@ func TestRenderJSON(t *testing.T) {
 		InputTokens:  10,
 		OutputTokens: 2,
 	}
-	renderJSON(&buf, res, "kept 1/5 changed lines")
+	renderJSONMeta(&buf, res, "kept 1/5 changed lines", "git", "HEAD", false)
 
 	var got map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
@@ -197,6 +197,9 @@ func TestRenderJSON(t *testing.T) {
 		"input_tokens":  float64(10),
 		"output_tokens": float64(2),
 		"elision":       "kept 1/5 changed lines",
+		"vcs":           "git",
+		"source":        "HEAD",
+		"empty":         false,
 	} {
 		if got[k] != want {
 			t.Errorf("json[%q] = %v, want %v", k, got[k], want)

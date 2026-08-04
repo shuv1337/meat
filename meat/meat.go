@@ -64,7 +64,7 @@ type Request struct {
 	// the tools are disabled (the model abridges from the diff text alone).
 	RepoRoot string
 	// UnifiedDiff is the raw unified diff to abridge (e.g. the full output of
-	// `git diff` or `git show`). Required.
+	// `git diff`, `git show`, or `jj diff --git`). Required.
 	UnifiedDiff string
 	// MaxTurns overrides defaultMaxTurns when > 0.
 	MaxTurns int
@@ -73,6 +73,11 @@ type Request struct {
 	// prefix each update with its chunk). Callers use it for interactive
 	// feedback; it must not block.
 	Progress func(msg string)
+	// RepoBackend selects contextual search: "git" (git grep, POSIX BRE) or
+	// "jj" (jj file list + Go RE2). Empty falls back to git when RepoRoot is
+	// set, preserving prior embedder behavior. Appended after the original
+	// fields so existing positional struct literals stay source-compatible.
+	RepoBackend string
 }
 
 // runOptions carries chunk-internal state for one agent run, kept out of the
@@ -120,7 +125,7 @@ func Abridge(ctx context.Context, model Model, req Request) (*Result, error) {
 		return &Result{Summary: "No changes."}, nil
 	}
 	if len(req.UnifiedDiff) > maxTotalDiffBytes {
-		return nil, fmt.Errorf("meat: diff is %dMB, over the %dMB limit — try a narrower range (a single commit, or per-file with `git diff -- <path> | meat`)", len(req.UnifiedDiff)>>20, maxTotalDiffBytes>>20)
+		return nil, fmt.Errorf("meat: diff is %dMB, over the %dMB limit — try a narrower range (a single commit, or per-file with `git diff -- <path> | meat` / `jj diff --git -r <revset> | meat`)", len(req.UnifiedDiff)>>20, maxTotalDiffBytes>>20)
 	}
 	if err := validateSupportedDiff(req.UnifiedDiff); err != nil {
 		return nil, fmt.Errorf("meat: %w", err)
@@ -145,7 +150,7 @@ func abridgeOne(ctx context.Context, model Model, req Request, opts runOptions) 
 	ctx, cancel := context.WithTimeout(ctx, abridgeBudget)
 	defer cancel()
 
-	tb := &toolbox{root: req.RepoRoot, rawDiff: req.UnifiedDiff, noMoves: opts.chunkRun, moves: opts.chunkMoves}
+	tb := &toolbox{root: req.RepoRoot, backend: req.RepoBackend, rawDiff: req.UnifiedDiff, noMoves: opts.chunkRun, moves: opts.chunkMoves}
 	tools := tb.tools()
 
 	messages := []Message{{

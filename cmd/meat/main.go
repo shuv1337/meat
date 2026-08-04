@@ -5,24 +5,30 @@
 //
 // Usage:
 //
-//	# summarize the most recent commit in the current repo
+//	# summarize the default change in the current repo (git HEAD / jj @)
 //	meat
 //
-//	# summarize a specific commit or revision
+//	# summarize a specific commit, revision, or jj revset
 //	meat <sha>
 //	meat HEAD~3
+//	meat '@-'
+//	meat 'trunk()::@'
 //
-//	# diff across a commit range
+//	# diff across a commit range (git) or revset (jj)
 //	meat <sha1>..<sha2>
 //	meat main...HEAD
 //
-//	# staged / unstaged changes
-//	meat -staged
+//	# current / parent change
 //	meat -w
+//	meat current
+//	meat parent
+//
+//	# staged changes (git only)
+//	meat -staged
 //
 //	# abridge any diff piped on stdin
 //	git show <sha> | meat
-//	git diff main...HEAD | meat
+//	jj diff --git | meat
 //
 // It reads OPENAI_API_KEY or ANTHROPIC_API_KEY from the environment
 // (optionally the matching provider base URL, plus MEAT_MODEL / -model),
@@ -35,7 +41,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -45,22 +50,38 @@ import (
 const usage = `meat — abridge a diff into a "reading diff"
 
 Usage:
-  meat                 Summarize the most recent commit (HEAD) in the current git repo.
-  meat <revision>      Summarize a specific commit or revision (e.g. a sha, HEAD~3).
-  meat <range>         Diff across a commit range (e.g. sha1..sha2, main...HEAD).
-  meat -staged         Abridge the staged (index) changes: git diff --staged.
-  meat -w              Abridge the unstaged working-tree changes: git diff.
+  meat                 Summarize the default change (git HEAD, or jj @).
+  meat <revision>      Summarize a git revision/range or jj revset.
+  meat current         Summarize the current change (git worktree / jj @).
+  meat parent          Summarize the parent change (git HEAD / jj @-).
+  meat -staged         Abridge staged (index) changes — git only.
+  meat -w              Abridge the current change (same as meat current).
   git show <sha> | meat   Abridge the diff piped on stdin.
-  git diff | meat         Abridge the working-tree diff piped on stdin.
+  jj diff --git | meat    Abridge a jj Git-format diff piped on stdin.
 
   meat login openai [--device]   Log in with ChatGPT Plus/Pro subscription.
   meat login anthropic           Log in with Claude Pro/Max subscription.
   meat logout [openai|anthropic] Remove stored OAuth credentials.
   meat auth status               Show OAuth credential status.
 
-meat reads a unified diff (from stdin, from a named revision or range, or HEAD
-when stdin is a terminal), asks an LLM to drop everything not worth reading, and
-prints the abridged diff plus a one-line summary.
+meat reads a unified diff (from stdin, from a named target, or the backend
+default when stdin is a terminal), asks an LLM to drop everything not worth
+reading, and prints the abridged diff plus a one-line summary.
+
+Backend selection (first match wins):
+  1. -vcs=git|jj
+  2. MEAT_VCS=git|jj
+  3. Auto-detect: deepest repository root wins; colocated jj/git prefers jj.
+
+In a colocated repository jj is the default. Use -vcs=git for Git index
+semantics. current and parent are reserved keywords that shadow same-named
+refs; reach a Git branch named parent as refs/heads/parent, or a jj bookmark
+as bookmarks(exact:"parent").
+
+jj targets are passed verbatim to jj diff --git -r <revset>. Quote revsets
+that the shell would expand, e.g. meat '@-' or meat 'trunk()::@'.
+jj has no staging area: -staged fails under jj.
+jj diff reads snapshot the working copy (including background prewarm).
 
 Results are cached under ~/.meat keyed by the SHA of (rubric/compiler protocol +
 model + diff contents), so re-running on an unchanged diff is instant; editing
@@ -68,13 +89,15 @@ the diff, switching models, or upgrading meat's rubric or compiler invariants
 recomputes.
 
 On an interactive terminal the diff is colored and paged like git show (using
-your git pager and color.diff config); piped/redirected output stays plain.
+your git pager and color.diff config when available); piped/redirected output
+stays plain.
 
 Flags:
   -model string   Model to use (default $MEAT_MODEL or a built-in default).
   -no-cache       Ignore any cached result and recompute (still updates cache).
-  -staged         Read the staged changes (git diff --staged).
-  -w              Read the unstaged working-tree changes (git diff).
+  -staged         Read staged changes (git only).
+  -w              Read the current change (git worktree / jj @).
+  -vcs string     Backend: auto (default), git, or jj.
   -json           Emit the result as JSON on stdout (no color, no pager).
   -h, --help      Show this help.
 
@@ -84,6 +107,7 @@ Environment:
   ANTHROPIC_API_KEY    API key for Claude models.
   ANTHROPIC_BASE_URL   Optional. Override the Anthropic API base URL.
   MEAT_MODEL           Optional. Default model id.
+  MEAT_VCS             Optional. Backend preference: auto, git, or jj.
   MEAT_CACHE           Optional. Cache directory (default ~/.meat; empty disables).
   MEAT_AUTH_FILE       Optional. OAuth credential store (default ~/.meat/auth.json).
 
@@ -101,8 +125,9 @@ func main() {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	model := fs.String("model", "", "model to use (default $MEAT_MODEL or built-in default)")
 	noCache := fs.Bool("no-cache", false, "ignore any cached result and recompute (still updates the cache)")
-	staged := fs.Bool("staged", false, "read the staged changes (git diff --staged)")
-	worktree := fs.Bool("w", false, "read the unstaged working-tree changes (git diff)")
+	staged := fs.Bool("staged", false, "read staged changes (git only)")
+	worktree := fs.Bool("w", false, "read the current change (git worktree / jj @)")
+	vcsFlag := fs.String("vcs", "", "backend: auto, git, or jj (default auto; also MEAT_VCS)")
 	jsonOut := fs.Bool("json", false, "emit the result as JSON on stdout")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		// flag already printed the error and (for -h) the usage.
@@ -112,11 +137,22 @@ func main() {
 		os.Exit(2)
 	}
 
-	diff, source, err := readDiff(fs.Args(), *staged, *worktree)
+	pref, err := parseVCSPreference(*vcsFlag, os.Getenv("MEAT_VCS"))
 	if err != nil {
 		fatal("%v", err)
 	}
-	if strings.TrimSpace(diff) == "" {
+	repo, err := detectRepository(pref)
+	if err != nil {
+		fatal("%v", err)
+	}
+
+	diff, source, err := readDiff(repo, fs.Args(), *staged, *worktree)
+	if err != nil {
+		fatal("%v", err)
+	}
+
+	empty := strings.TrimSpace(diff) == ""
+	if empty && !*jsonOut {
 		fatal("no diff to read (%s)", source)
 	}
 
@@ -132,6 +168,21 @@ func main() {
 		}
 	}
 
+	vcsLabel := string(repo.kind)
+	if source == "stdin" && repo.kind == "" {
+		vcsLabel = ""
+	}
+
+	if empty {
+		// Structured empty success: no model, no cache, zero tokens.
+		res := &meat.Result{Summary: emptySummary(source)}
+		if interactive {
+			fmt.Fprint(os.Stderr, "\r\x1b[K")
+		}
+		renderJSONMeta(os.Stdout, res, "", vcsLabel, source, true)
+		return
+	}
+
 	// compute produces a fresh result on a cache miss. It is a closure so run()
 	// can be unit-tested without an LLM: the real path constructs the selected
 	// provider model (which needs credentials/network) only here, AFTER the cache
@@ -144,7 +195,8 @@ func main() {
 		// Confine the read-only tools to the repo root, when we're in one, so
 		// the agent can inspect surrounding source for clues.
 		return meat.Abridge(ctx, m, meat.Request{
-			RepoRoot:    gitRoot(),
+			RepoRoot:    repo.root,
+			RepoBackend: string(repo.kind),
 			UnifiedDiff: diff,
 			Progress:    progress,
 		})
@@ -156,7 +208,7 @@ func main() {
 		}
 		elision := meat.ElisionLine(diff, res.SmartDiff)
 		if *jsonOut {
-			renderJSON(os.Stdout, res, elision)
+			renderJSONMeta(os.Stdout, res, elision, vcsLabel, source, false)
 			return
 		}
 		// On an interactive terminal, render like `git show`: git's diff colors
@@ -179,6 +231,23 @@ func main() {
 			fmt.Fprint(os.Stderr, "\r\x1b[K")
 		}
 		fatal("%v", err)
+	}
+}
+
+// emptySummary is the human-readable summary for a valid empty target.
+func emptySummary(source string) string {
+	switch source {
+	case "staged":
+		return "No staged changes."
+	case "worktree":
+		return "No unstaged changes."
+	case "stdin":
+		return "No changes."
+	default:
+		if source == "" {
+			return "No changes."
+		}
+		return fmt.Sprintf("No changes in %s.", source)
 	}
 }
 
@@ -225,105 +294,6 @@ func run(ctx context.Context, o runOpts) error {
 	o.render(res)
 	fmt.Fprintf(o.stderr, "\nmeat: tokens in=%d out=%d in %s\n", res.InputTokens, res.OutputTokens, elapsed)
 	return nil
-}
-
-// readDiff returns the diff to abridge. Precedence:
-//   - -staged / -w: the index or working-tree diff;
-//   - an explicit revision argument: `git show` of that revision;
-//   - stdin, when piped;
-//   - otherwise `git show` of the top commit (HEAD) in the current repo.
-//
-// The second return value names the source for error messages.
-func readDiff(args []string, staged, worktree bool) (string, string, error) {
-	if staged && worktree {
-		return "", "", fmt.Errorf("-staged and -w are mutually exclusive")
-	}
-	if (staged || worktree) && len(args) > 0 {
-		return "", "", fmt.Errorf("-staged/-w cannot be combined with a revision argument")
-	}
-	if staged {
-		out, err := git("diff", "--staged")
-		if err != nil {
-			return "", "staged", fmt.Errorf("reading staged changes: %w", err)
-		}
-		return out, "staged; nothing staged?", nil
-	}
-	if worktree {
-		out, err := git("diff")
-		if err != nil {
-			return "", "worktree", fmt.Errorf("reading working-tree changes: %w", err)
-		}
-		return out, "worktree; no unstaged changes?", nil
-	}
-	if len(args) > 1 {
-		return "", "", fmt.Errorf("too many arguments: want at most one revision, got %d", len(args))
-	}
-	if len(args) == 1 {
-		rev := args[0]
-		// A range (A..B or A...B) is a diff across commits; a single revision
-		// is one commit. `git show` on a range emits per-commit output, not the
-		// single aggregate diff we want, so dispatch ranges to `git diff`.
-		var out string
-		var err error
-		if isRevRange(rev) {
-			out, err = git("diff", rev)
-		} else {
-			out, err = gitShow(rev)
-		}
-		if err != nil {
-			return "", rev, fmt.Errorf("reading %q: %w", rev, err)
-		}
-		return out, rev, nil
-	}
-	if stdinIsPiped() {
-		data, err := readAllStdin()
-		if err != nil {
-			return "", "stdin", err
-		}
-		return string(data), "stdin", nil
-	}
-	// No pipe and no revision: summarize the top commit.
-	out, err := gitShow("HEAD")
-	if err != nil {
-		return "", "HEAD", fmt.Errorf("reading HEAD (are you in a git repo?): %w", err)
-	}
-	return out, "HEAD", nil
-}
-
-// gitShow shows one commit's diff. Plain `git show` on a merge commit emits NO
-// diff (so meat would report "no diff to read"); -m --first-parent makes a
-// merge show its diff against the first parent — i.e. "what did merging this
-// branch change on main" — and leaves regular commits untouched.
-func gitShow(rev string) (string, error) {
-	return git("show", "--format=fuller", "-m", "--first-parent", rev)
-}
-
-// isRevRange reports whether rev uses git's range syntax (A..B or A...B), as
-// opposed to a single revision. Such ranges are diffed with `git diff`, not
-// summarized with `git show`.
-func isRevRange(rev string) bool {
-	return strings.Contains(rev, "..")
-}
-
-func git(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	out, err := cmd.Output()
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(ee.Stderr)))
-		}
-		return "", err
-	}
-	return string(out), nil
-}
-
-// gitRoot returns the repo root, or "" if cwd is not inside a git repo.
-func gitRoot() string {
-	out, err := git("rev-parse", "--show-toplevel")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(out)
 }
 
 func fatal(format string, args ...any) {

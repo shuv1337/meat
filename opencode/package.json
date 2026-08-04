@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "opencode-meat",
+  "version": "0.3.0",
+  "description": "First-class OpenCode V2 integration for meat reading diffs",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.ts",
+    "./server": "./index.ts",
+    "./tui": "./tui.ts"
+  },
+  "files": ["core.ts", "index.ts", "tui.ts", "README.md"],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "next",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/theme": "0.0.0-next-16732",
+    "@opentui/core": "0.4.5",
+    "@opentui/keymap": "0.4.5",
+    "@opentui/solid": "0.4.5",
+    "@types/bun": "latest",
+    "@types/json-schema": "latest",
+    "solid-js": "1.9.10",
+    "typescript": "5.8.2"
+  }
+}

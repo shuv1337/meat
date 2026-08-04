@@ -12,18 +12,28 @@ import (
 )
 
 // jsonResult is the -json wire form: the Result plus the machine-computed
-// elision manifest.
+// elision manifest and invocation metadata. vcs/source/empty are not part of
+// the persistent cache payload.
 type jsonResult struct {
 	meat.Result
 	Elision string `json:"elision,omitempty"`
+	VCS     string `json:"vcs,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Empty   bool   `json:"empty"`
 }
 
-// renderJSON writes the result as a single JSON object. No color, no pager,
+// renderJSONMeta writes the result as a single JSON object. No color, no pager,
 // stable snake_case keys — for CI bots and other tooling.
-func renderJSON(w io.Writer, res *meat.Result, elision string) {
+func renderJSONMeta(w io.Writer, res *meat.Result, elision, vcs, source string, empty bool) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	enc.Encode(jsonResult{Result: *res, Elision: elision})
+	enc.Encode(jsonResult{
+		Result:  *res,
+		Elision: elision,
+		VCS:     vcs,
+		Source:  source,
+		Empty:   empty,
+	})
 }
 
 // renderResult writes the result body (summary + diff) to w. When w is an

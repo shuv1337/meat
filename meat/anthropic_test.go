@@ -212,3 +212,9 @@ func TestGenerate_SendsMaxOutputTokens(t *testing.T) {
 		t.Errorf("max_tokens sent = %d, want %d", gotMax, maxOutputTokens)
 	}
 }
+
+func TestAnthropicHTTPTimeoutExceedsAgentBudget(t *testing.T) {
+	if defaultAnthropicHTTPTimeout <= defaultBudget {
+		t.Fatalf("Anthropic HTTP timeout %s must exceed agent budget %s to avoid retrying a live request", defaultAnthropicHTTPTimeout, defaultBudget)
+	}
+}

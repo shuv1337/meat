@@ -23,13 +23,18 @@ type AnthropicModel struct {
 	Model   string       // defaults to DefaultAnthropicModel
 	BaseURL string       // bare origin/prefix; defaults to https://api.anthropic.com. "/v1/messages" is appended.
 	OAuth   bool         // when true, use Claude Pro/Max subscription wire contract (Bearer + Claude Code identity)
-	HTTPC   *http.Client // defaults to a client with a 2m timeout
+	HTTPC   *http.Client // defaults to a client with a 5m timeout
 }
 
 // maxOutputTokens is the per-turn output cap sent to the API. Large enough for
 // an edit plan over a sizable diff; a response that still stops at max_tokens
 // is reported as an error rather than silently truncated.
 const maxOutputTokens = 16384
+
+// defaultAnthropicHTTPTimeout must stay longer than the agent's total budget.
+// The request context is the real cap; this only prevents the HTTP client from
+// aborting and retrying a slow, healthy response from scratch.
+const defaultAnthropicHTTPTimeout = 5 * time.Minute
 
 // implicitGatewayKey is the placeholder API key sent to the exe.dev LLM
 // gateway. The gateway injects the real managed credential at the network edge,
@@ -180,7 +185,10 @@ func (m *AnthropicModel) Generate(ctx context.Context, system string, messages [
 	}
 	client := m.HTTPC
 	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
+		// Keep the transport timeout longer than Abridge's four-minute agent
+		// budget. A shorter timeout retries a slow-but-healthy large request from
+		// scratch, guaranteeing the outer budget expires during the retry.
+		client = &http.Client{Timeout: defaultAnthropicHTTPTimeout}
 	}
 	raw, err := postAnthropicWithAuth(ctx, client, endpoint, apiKey, oauth, body)
 	if err != nil && oauth && isUnauthorizedErr(err) {

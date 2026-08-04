@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "types": ["bun"]
+  },
+  "include": ["core.ts", "index.ts", "index.test.ts", "tui.ts"]
+}

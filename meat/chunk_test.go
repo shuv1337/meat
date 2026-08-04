@@ -1539,7 +1539,7 @@ func TestSplitDiff_PythonContinuationsAtomic(t *testing.T) {
 // bookkeeping lives in runOptions, not Request, so embedders' positional
 // struct literals keep compiling across the chunking feature.
 func TestRequestStaysPositionalCompatible(t *testing.T) {
-	req := Request{"", "diff --git a/a b/a\n@@ -1 +1 @@\n+x\n", 0, nil}
+	req := Request{"", "diff --git a/a b/a\n@@ -1 +1 @@\n+x\n", 0, nil, ""}
 	if req.UnifiedDiff == "" {
 		t.Fatal("positional Request literal did not populate UnifiedDiff")
 	}

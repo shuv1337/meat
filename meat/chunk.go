@@ -248,7 +248,7 @@ func splitDiffForAbridging(raw string, budget int) ([]diffChunk, error) {
 // the full expansion is allocated.
 func (b *chunkBuilder) add(c diffChunk) error {
 	if len(b.chunks) >= maxChunks {
-		return fmt.Errorf("diff splits into more than %d chunks — try a narrower range (a single commit, or per-file with `git diff -- <path> | meat`)", maxChunks)
+		return fmt.Errorf("diff splits into more than %d chunks — try a narrower range (a single commit, or per-file with `git diff -- <path> | meat` / `jj diff --git -r <revset> | meat`)", maxChunks)
 	}
 	b.chunks = append(b.chunks, c)
 	return nil
@@ -400,7 +400,7 @@ func (b *chunkBuilder) splitSection(sectionID int, s lineSpan) error {
 		}
 	}
 	if firstHunk == s.end {
-		return fmt.Errorf("file section at line %d is %dKB with no hunks to split — try a narrower diff (per-file with `git diff -- <path> | meat`)",
+		return fmt.Errorf("file section at line %d is %dKB with no hunks to split — try a narrower diff (per-file with `git diff -- <path> | meat` / `jj diff --git -r <revset> | meat`)",
 			s.start+1, (b.prefixRaw[s.end]-b.prefixRaw[s.start])>>10)
 	}
 	metaStart := firstHunk
@@ -672,7 +672,7 @@ func (b *chunkBuilder) splitHunk(h lineSpan, prefixSizes func() (textLen, rawLen
 			break
 		}
 		if segCount == 0 {
-			return fmt.Errorf("cannot split the diff near line %d into a chunk under the size limit — try a narrower diff (per-file with `git diff -- <path> | meat`)", i+1)
+			return fmt.Errorf("cannot split the diff near line %d into a chunk under the size limit — try a narrower diff (per-file with `git diff -- <path> | meat` / `jj diff --git -r <revset> | meat`)", i+1)
 		}
 		if !hasChange {
 			continue
